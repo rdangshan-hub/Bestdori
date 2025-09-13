@@ -1,1 +1,277 @@
-# Bestdori
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>Bestdori Playlist Player</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- iPhone用 PWA化 -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="mobile-web-app-capable" content="yes">
+  <style>
+    body { font-family: sans-serif; background: #f0f0f0; margin: 0; padding: 20px; }
+    .container { max-width: 900px; margin: auto; }
+    h2 { margin: 10px 0; }
+    .section { background: white; border-radius: 12px; padding: 15px; margin-bottom: 20px; box-shadow: 0 4px 10px rgba(0,0,0,0.1);}
+    ul { list-style: none; padding: 0; max-height: 300px; overflow-y: auto; }
+    li { margin: 4px 0; padding: 6px; background: #fafafa; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; cursor: grab; }
+    li.dragging { opacity: 0.5; }
+    button { border: none; padding: 6px 12px; border-radius: 6px; background: #2196f3; color: white; }
+    button:hover { background: #1976d2; }
+    input { padding: 6px; font-size: 14px; width: 100%; margin-bottom: 10px; }
+    audio { width: 100%; margin-top: 10px; }
+    .controls { margin-top: 10px; display: flex; justify-content: space-around; }
+    img.cover { width: 200px; height: 200px; object-fit: cover; border-radius: 12px; margin: 10px auto; display: block; }
+    .tabs { display: flex; overflow-x: auto; margin-bottom: 8px; }
+    .tab { padding: 6px 12px; margin: 2px; border-radius: 6px; background: #eee; cursor: pointer; white-space: nowrap; }
+    .tab.active { background: #2196f3; color: white; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="section">
+      <h2>🎶 曲一覧</h2>
+      <input type="text" id="searchInput" placeholder="曲名で検索…">
+      <ul id="songList"><li>ロード中…</li></ul>
+    </div>
+
+    <div class="section">
+      <h2>📃 プレイリスト</h2>
+      <div class="playlist-header">
+        <div id="playlistTabs" class="tabs"></div>
+        <select id="playlistSelector" onchange="switchPlaylist()"></select>
+        <button onclick="newPlaylist()">＋新規</button>
+        <button onclick="renamePlaylist()">✏️ 名前変更</button>
+        <button onclick="deletePlaylist()">🗑 削除</button>
+      </div>
+      <ul id="playlist"></ul>
+      <img id="cover" class="cover" src="" alt="ジャケット">
+      <audio id="audio" controls></audio>
+      <div class="controls">
+        <button onclick="toggleShuffle()">🔀 シャッフル</button>
+        <button onclick="toggleRepeat()">🔁 リピート: <span id="repeatMode">なし</span></button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const audio = document.getElementById('audio');
+    const songListEl = document.getElementById('songList');
+    const playlistEl = document.getElementById('playlist');
+    const cover = document.getElementById('cover');
+    const repeatModeEl = document.getElementById('repeatMode');
+
+    let playlists = JSON.parse(localStorage.getItem('playlists')) || { "デフォルト": [] };
+    let currentPlaylist = Object.keys(playlists)[0] || "デフォルト";
+    let currentIndex = 0;
+    let shuffle = false;
+    let repeatMode = 0; // 0:なし, 1:1曲, 2:全体
+
+    // 保存
+    function savePlaylists() {
+      localStorage.setItem('playlists', JSON.stringify(playlists));
+    }
+
+    // プレイリスト描画
+    function renderPlaylist() {
+      const list = playlists[currentPlaylist] || [];
+      playlistEl.innerHTML = '';
+      list.forEach((track, index) => {
+        const li = document.createElement('li');
+        li.draggable = true;
+        li.innerHTML = `
+          <span>${track.title}</span>
+          <div>
+            <button onclick="playTrack(${index})">▶</button>
+            <button onclick="removeTrack(${index})">❌</button>
+          </div>
+        `;
+        // Dragイベント
+        li.addEventListener('dragstart', e => {
+          li.classList.add('dragging');
+          e.dataTransfer.setData('text/plain', index);
+        });
+        li.addEventListener('dragend', () => li.classList.remove('dragging'));
+        playlistEl.appendChild(li);
+      });
+      savePlaylists();
+    }
+
+    // 並び替え
+    playlistEl.addEventListener('dragover', e => {
+      e.preventDefault();
+      const dragging = playlistEl.querySelector('.dragging');
+      const afterElement = getDragAfterElement(playlistEl, e.clientY);
+      if (afterElement == null) {
+        playlistEl.appendChild(dragging);
+      } else {
+        playlistEl.insertBefore(dragging, afterElement);
+      }
+    });
+
+    playlistEl.addEventListener('drop', e => {
+      const oldIndex = e.dataTransfer.getData('text/plain');
+      const newIndex = [...playlistEl.children].indexOf(playlistEl.querySelector('.dragging'));
+      const moved = playlists[currentPlaylist].splice(oldIndex, 1)[0];
+      playlists[currentPlaylist].splice(newIndex, 0, moved);
+      renderPlaylist();
+    });
+
+    function getDragAfterElement(container, y) {
+      const elements = [...container.querySelectorAll('li:not(.dragging)')];
+      return elements.reduce((closest, child) => {
+        const box = child.getBoundingClientRect();
+        const offset = y - box.top - box.height / 2;
+        if (offset < 0 && offset > closest.offset) {
+          return { offset, element: child };
+        } else {
+          return closest;
+        }
+      }, { offset: Number.NEGATIVE_INFINITY }).element;
+    }
+
+    // プレイリスト操作
+    function addToPlaylist(song) {
+      playlists[currentPlaylist].push(song);
+      renderPlaylist();
+    }
+    function removeTrack(index) {
+      playlists[currentPlaylist].splice(index, 1);
+      renderPlaylist();
+    }
+    function playTrack(index) {
+      currentIndex = index;
+      const track = playlists[currentPlaylist][index];
+      audio.src = track.url;
+      cover.src = track.cover || '';
+      audio.play();
+    }
+
+    // 再生終了処理
+    audio.addEventListener('ended', () => {
+      if (repeatMode === 1) {
+        playTrack(currentIndex);
+      } else if (shuffle) {
+        currentIndex = Math.floor(Math.random() * playlists[currentPlaylist].length);
+        playTrack(currentIndex);
+      } else if (currentIndex < playlists[currentPlaylist].length - 1) {
+        currentIndex++;
+        playTrack(currentIndex);
+      } else if (repeatMode === 2) {
+        currentIndex = 0;
+        playTrack(currentIndex);
+      }
+    });
+
+    // シャッフル/リピート
+    function toggleShuffle() {
+      shuffle = !shuffle;
+      alert("シャッフル: " + (shuffle ? "ON" : "OFF"));
+    }
+    function toggleRepeat() {
+      repeatMode = (repeatMode + 1) % 3;
+      repeatModeEl.textContent = ["なし","1曲","全体"][repeatMode];
+    }
+
+    // プレイリスト管理
+    function renderPlaylistTabs() {
+      const tabs = document.getElementById('playlistTabs');
+      tabs.innerHTML = '';
+      Object.keys(playlists).forEach(name => {
+        const tab = document.createElement('div');
+        tab.textContent = name;
+        tab.className = 'tab' + (name === currentPlaylist ? ' active' : '');
+        tab.onclick = () => {
+          currentPlaylist = name;
+          renderPlaylistTabs();
+          renderPlaylistSelector();
+          renderPlaylist();
+        };
+        tabs.appendChild(tab);
+      });
+    }
+    function renderPlaylistSelector() {
+      const sel = document.getElementById('playlistSelector');
+      sel.innerHTML = '';
+      Object.keys(playlists).forEach(name => {
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = name;
+        if (name === currentPlaylist) opt.selected = true;
+        sel.appendChild(opt);
+      });
+    }
+    function newPlaylist() {
+      const name = prompt("新しいプレイリスト名：");
+      if (name && !playlists[name]) {
+        playlists[name] = [];
+        currentPlaylist = name;
+        savePlaylists();
+        renderPlaylistTabs();
+        renderPlaylistSelector();
+        renderPlaylist();
+      }
+    }
+    function renamePlaylist() {
+      const newName = prompt("新しいプレイリスト名：", currentPlaylist);
+      if (newName && !playlists[newName]) {
+        playlists[newName] = playlists[currentPlaylist];
+        delete playlists[currentPlaylist];
+        currentPlaylist = newName;
+        savePlaylists();
+        renderPlaylistTabs();
+        renderPlaylistSelector();
+        renderPlaylist();
+      } else if (playlists[newName]) {
+        alert("同じ名前のプレイリストがあります！");
+      }
+    }
+    function deletePlaylist() {
+      if (confirm(`${currentPlaylist} を削除しますか？`)) {
+        delete playlists[currentPlaylist];
+        currentPlaylist = Object.keys(playlists)[0] || "デフォルト";
+        if (!playlists[currentPlaylist]) playlists[currentPlaylist] = [];
+        savePlaylists();
+        renderPlaylistTabs();
+        renderPlaylistSelector();
+        renderPlaylist();
+      }
+    }
+
+    // 曲一覧
+    async function loadSongs() {
+      try {
+        const res = await fetch('https://bestdori.com/api/songs/all.5.json');
+        const data = await res.json();
+        songListEl.innerHTML = '';
+        Object.values(data).forEach(song => {
+          if (song.audio && song.musicTitle) {
+            const coverUrl = song.jacketImage ? "https://bestdori.com/assets/jacket/" + song.jacketImage : "";
+            const li = document.createElement('li');
+            li.innerHTML = `
+              <span>${song.musicTitle}</span>
+              <button onclick='addToPlaylist({title:"${song.musicTitle}",url:"${song.audio}",cover:"${coverUrl}"})'>＋</button>
+            `;
+            songListEl.appendChild(li);
+          }
+        });
+      } catch (e) {
+        songListEl.innerHTML = '<li>取得に失敗しました</li>';
+      }
+    }
+
+    // 検索
+    document.getElementById('searchInput').addEventListener('input', e => {
+      const keyword = e.target.value.toLowerCase();
+      document.querySelectorAll('#songList li').forEach(li => {
+        li.style.display = li.textContent.toLowerCase().includes(keyword) ? '' : 'none';
+      });
+    });
+
+    loadSongs();
+    renderPlaylistTabs();
+    renderPlaylistSelector();
+    renderPlaylist();
+  </script>
+</body>
+</html>
