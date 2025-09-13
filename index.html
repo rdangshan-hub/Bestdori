@@ -241,7 +241,7 @@
     // 曲一覧
     async function loadSongs() {
       try {
-        const res = await fetch('https://bestdori.com/api/songs/all.5.json');
+        const res = await fetch('https://bestdori-proxy.w8zdjvymsh.workers.dev/');
         const data = await res.json();
         songListEl.innerHTML = '';
         Object.values(data).forEach(song => {
